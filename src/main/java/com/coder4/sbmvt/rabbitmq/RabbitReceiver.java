@@ -13,6 +13,7 @@ import com.rabbitmq.client.DefaultConsumer;
 import com.rabbitmq.client.Envelope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.io.IOException;
@@ -24,7 +25,7 @@ import java.util.List;
 /**
  * @author coder4
  */
-public abstract class RabbitReceiver<Msg> {
+public abstract class RabbitReceiver<Msg> implements DisposableBean {
 
     protected final Logger LOG = LoggerFactory.getLogger(getClass());
 
@@ -132,11 +133,15 @@ public abstract class RabbitReceiver<Msg> {
         rabbitClient.stop();
     }
 
+    protected String getQueueName() {
+        return String.format("%s#%s#receiver", getProjectName(), getExchangeName());
+    }
+
     protected abstract void onEvent(Msg msg);
 
     protected abstract String getExchangeName();
 
-    protected abstract String getQueueName();
+    protected abstract String getProjectName();
 
     protected String getRoutingKey() {
         // Default # as routing key
@@ -148,5 +153,10 @@ public abstract class RabbitReceiver<Msg> {
         this.rabbitClient = rabbitClient;
         // after got rabbit client, init it
         init();
+    }
+
+    @Override
+    public void destroy() throws Exception {
+        stop();
     }
 }

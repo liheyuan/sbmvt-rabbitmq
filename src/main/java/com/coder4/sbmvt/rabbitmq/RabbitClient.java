@@ -6,6 +6,7 @@
  */
 package com.coder4.sbmvt.rabbitmq;
 
+import com.rabbitmq.client.AlreadyClosedException;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
@@ -55,6 +56,8 @@ public class RabbitClient {
                 getConnection().close();
             }
             LOG.info("RabbitClient stopped");
+        } catch (AlreadyClosedException e1) {
+            LOG.info("rabbit client already closed.");
         } catch (Exception e) {
             LOG.warn("RabbitClient stop excepton", e);
         }

@@ -12,17 +12,13 @@ import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.MessageProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
-
-import java.io.IOException;
-import java.util.concurrent.LinkedBlockingDeque;
 
 /**
  * @author coder4
  */
-public abstract class RabbitSender<T> {
-
-    private static final int SENDER_RETRY_QUEUE_MAX_SIZE = 1024 * 1024 * 1024;
+public abstract class RabbitSender<T> implements DisposableBean {
 
     protected final Logger LOG = LoggerFactory.getLogger(getClass());
 
@@ -30,11 +26,7 @@ public abstract class RabbitSender<T> {
 
     private RabbitClient rabbitClient;
 
-    protected LinkedBlockingDeque<T> retryQueue;
-
-    private Thread retryThread;
-
-    private Channel retryChannel;
+    private RabbitResendThread<T> resendThread;
 
     private Channel senderChannel;
 
@@ -42,82 +34,42 @@ public abstract class RabbitSender<T> {
 
         jsonObjectMapper = new ObjectMapper();
 
-        retryQueue = new LinkedBlockingDeque<>(SENDER_RETRY_QUEUE_MAX_SIZE);
-
         try {
             senderChannel = rabbitClient.createChannel();
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
 
-        start();
+        startResendThread();
     }
 
     public void stop() {
-        // wait for empty
-        while (!retryQueue.isEmpty()) {
-            try {
-                LOG.info("retryQueue is not empty, sleep.");
-                Thread.sleep(50);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-        }
+
+        // retry thread
+        resendThread.joinAndStop();
 
         // Close all resources
-        try {
-            senderChannel.close();
-            retryChannel.close();
-            retryThread.interrupt();
-            retryThread.join();
-        } catch (Exception e) {
-            LOG.warn("join retryThread failed", e);
-        }
+        RabbitClient.closeChannel(senderChannel);
         rabbitClient.stop();
     }
 
-    private void start() {
-        retryThread = new Thread(() -> {
-            try {
-                while (!Thread.currentThread().isInterrupted()) {
+    private Channel createChannel() throws Exception {
+        return rabbitClient.createChannel();
+    }
 
-                    try {
-                        if (retryChannel == null || !retryChannel.isOpen()) {
-                            retryChannel = rabbitClient.createChannel();
-                        }
-                    } catch (Exception e) {
-                        LOG.error("Create retryThread failed.", e);
-                        Thread.sleep(500);
-                        continue;
-                    }
+    private void startResendThread() {
+        resendThread = new RabbitResendThread<>(new RabbitResendThreadDelegate<T>() {
+            @Override
+            public Channel createChannel() throws Exception {
+                return RabbitSender.this.createChannel();
+            }
 
-                    T msg = null;
-                    try {
-                        msg = retryQueue.take();
-                        resend(msg);
-                        LOG.info("RabbitSender resend success");
-                    } catch (Exception t) {
-                        if (t instanceof InterruptedException) {
-                            throw (InterruptedException) t;
-                        }
-
-                        LOG.error("RabbitSender resend exception", t);
-                        if (msg != null) {
-                            retryQueue.putLast(msg);
-                        }
-                        if (retryChannel != null) {
-                            RabbitClient.closeChannel(retryChannel);
-                            retryChannel = null;
-                        }
-                    }
-                }
-            } catch (InterruptedException e) {
-                // will exit
-                LOG.info("RabbitSenderThread will exit", e);
+            @Override
+            public void doSend(Channel retryChannel, T msg) throws Exception {
+                RabbitSender.this.doSend(retryChannel, msg);
             }
         });
-
-        retryThread.start();
+        resendThread.start();
     }
 
     public void send(T msg) {
@@ -125,15 +77,11 @@ public abstract class RabbitSender<T> {
             doSend(senderChannel, msg);
         } catch (Exception e) {
             LOG.error("RabbitSender send exception, will resend", e);
-            retryQueue.offer(msg);
+            resendThread.resendLater(msg);
         }
     }
 
-    private void resend(T msg) throws IOException {
-        doSend(retryChannel, msg);
-    }
-
-    private void doSend(Channel channel, T msg) throws IOException {
+    private void doSend(Channel channel, T msg) throws Exception {
         byte[] payload = serialize(msg);
         channel.basicPublish(
                 getExchangeName(),
@@ -166,5 +114,10 @@ public abstract class RabbitSender<T> {
         this.rabbitClient = rabbitClient;
         // after got rabbit client, init it
         init();
+    }
+
+    @Override
+    public void destroy() throws Exception {
+        stop();
     }
 }
