@@ -1,0 +1,64 @@
+apply plugin: 'java'
+apply plugin: 'maven'
+apply plugin: 'idea'
+
+// Java 8
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+// Use as maven groupId/artifactId/version
+group = 'com.coder4.sbmvt'
+project.archivesBaseName = 'rabbitmq'
+project.version = '0.0.3-SNAPSHOT'
+
+// source & javadoc pom
+task sourcesJar(type: Jar, dependsOn: classes) {
+    classifier = 'sources'
+    from sourceSets.main.allSource
+}
+artifacts {
+    archives sourcesJar
+}
+
+repositories {
+    maven {
+        credentials {
+            username "$mavenUser"
+            password "$mavenPass"
+        }
+        url 'http://maven.coder4.com/nexus/content/groups/public'
+    }
+}
+
+// maven deploy config start
+configurations {
+    deployerJars
+}
+
+uploadArchives {
+    repositories.mavenDeployer {
+        configuration = configurations.deployerJars
+        repository(url: "http://maven.coder4.com/nexus/content/repositories/releases/") {
+            authentication(userName: "$mavenUser", password: "$mavenPass")
+        }
+        snapshotRepository(url: "http://maven.coder4.com/nexus/content/repositories/snapshots/") {
+            authentication(userName: "$mavenUser", password: "$mavenPass")
+        }
+    }
+}
+
+// maven deploy config end
+
+dependencies {
+    deployerJars "org.apache.maven.wagon:wagon-http:2.2"
+
+    compileOnly 'com.fasterxml.jackson.core:jackson-databind:2.9.0'
+    compileOnly 'org.springframework.boot:spring-boot-autoconfigure:1.5.6.RELEASE'
+
+    compile 'com.rabbitmq:amqp-client:4.2.0'
+
+    // Use JUnit test framework
+    testCompileOnly 'junit:junit:4.12'
+}
+
+
